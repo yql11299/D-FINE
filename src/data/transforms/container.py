@@ -1,6 +1,20 @@
 """
-Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
-Copyright(c) 2023 lyuwenyu. All Rights Reserved.
+数据增强容器与调度策略
+---------------------------------
+职责：
+- 承载一组可配置的图像/标签变换（`transforms`），并按策略动态决定执行；
+- 支持三种前向策略：默认执行、按 `epoch` 停止特定变换、按样本计数停止特定变换；
+- 通过全局注册机制从 YAML 配置中解析变换实例。
+
+使用方式：
+- 在数据集的 `transforms` 字段中声明：
+  - `type: Compose`，`ops: [...]` 变换列表；
+  - 可选 `policy`：`{"name": "default"|"stop_epoch"|"stop_sample", ...}`。
+
+策略说明：
+- `default`：所有变换顺序执行；
+- `stop_epoch`：达到设定 `epoch` 后，跳过 `policy.ops` 指定的变换；
+- `stop_sample`：累计样本数达到设定 `sample` 后，跳过 `policy.ops` 指定的变换。
 """
 
 from typing import Any, Dict, List, Optional
@@ -19,6 +33,12 @@ torchvision.disable_beta_transforms_warning()
 @register()
 class Compose(T.Compose):
     def __init__(self, ops, policy=None) -> None:
+        """根据配置构建变换管线并设置执行策略
+
+        参数：
+        - `ops`: 变换列表；支持字典（经注册表实例化）或已构建的 `nn.Module`
+        - `policy`: 执行策略字典（见模块说明）
+        """
         transforms = []
         if ops is not None:
             for op in ops:
@@ -49,9 +69,11 @@ class Compose(T.Compose):
         self.global_samples = 0
 
     def forward(self, *inputs: Any) -> Any:
+        """入口方法，按策略选择对应的执行函数"""
         return self.get_forward(self.policy["name"])(*inputs)
 
     def get_forward(self, name):
+        """返回策略对应的前向函数"""
         forwards = {
             "default": self.default_forward,
             "stop_epoch": self.stop_epoch_forward,
@@ -60,12 +82,18 @@ class Compose(T.Compose):
         return forwards[name]
 
     def default_forward(self, *inputs: Any) -> Any:
+        """默认：顺序执行所有变换"""
         sample = inputs if len(inputs) > 1 else inputs[0]
         for transform in self.transforms:
             sample = transform(sample)
         return sample
 
     def stop_epoch_forward(self, *inputs: Any):
+        """按 epoch 阈值停止指定变换
+
+        依赖：`policy` 中包含 `ops`（需要停止的变换类名列表）与 `epoch`（阈值）。
+        当当前数据集 `epoch >= policy.epoch` 时，对属于 `policy.ops` 的变换执行跳过。
+        """
         sample = inputs if len(inputs) > 1 else inputs[0]
         dataset = sample[-1]
         cur_epoch = dataset.epoch
@@ -81,6 +109,12 @@ class Compose(T.Compose):
         return sample
 
     def stop_sample_forward(self, *inputs: Any):
+        """按样本计数阈值停止指定变换
+
+        依赖：`policy` 中包含 `ops`（需要停止的变换类名列表）与 `sample`（阈值）。
+        当累计样本数 `global_samples >= policy.sample` 时，对属于 `policy.ops` 的变换执行跳过。
+        每次调用后自增 `global_samples`。
+        """
         sample = inputs if len(inputs) > 1 else inputs[0]
         dataset = sample[-1]
 

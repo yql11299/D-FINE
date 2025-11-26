@@ -1,4 +1,25 @@
 """
+FiftyOne 可视化与评估工具
+---------------------------------
+用途：
+- 通过 FiftyOne 加载公开数据集（默认 COCO-2017 validation）并启动 Web UI；
+- 从 D-FINE 的 YAML 配置与 checkpoint 加载模型与后处理器；
+- 对样本运行推理，生成 `predictions{eval_idx}` 标签字段并可选过滤置信度；
+- 使用 FiftyOne 的内置评估接口计算 mAP 等指标；
+- 将可视化/评估视图导出以便后续复现。
+
+主要流程：
+1) 预处理：尝试关闭遗留的 `mongod` 进程，避免与 FiftyOne 的后端数据库冲突；
+2) 数据加载：使用 `fiftyone.zoo` 加载 COCO-2017 验证集并持久化；
+3) 模型装载：读取 YAML 配置（`YAMLConfig`）与 `--resume` 指向的权重，构建推理模型与后处理器；
+4) 推理与评估：对采样视图运行推理，写入 `predictions{L}` 字段，过滤低置信度并计算评估指标；
+5) 导出与展示：导出预测视图到磁盘，打开 Web UI 并保持会话运行。
+
+注意：
+- 本工具默认将输入图片缩放到 `(640, 640)` 与模型预期一致，输出框以 640 归一化到 [0,1]；
+- 需要 GPU 环境（`.cuda()` 调用），如需 CPU 请自行修改模型与张量设备；
+- `--resume` 必须指定一个包含 `model` 或 `ema.module` 键的 checkpoint。
+
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
@@ -25,6 +46,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 
 def kill_existing_mongod():
+    """关闭已有的 mongod 进程
+
+    FiftyOne 使用 MongoDB 作为后端存储；若之前启动的 mongod 未正常退出，
+    可能导致端口/数据目录占用从而影响新的会话。这里通过扫描进程列表，
+    查找带有 `mongod` 且包含 `--dbpath` 参数的进程并强制终止。
+
+    建议：生产环境中应优先优雅关闭；此处为了工具稳健性采取强杀策略。
+    """
     try:
         result = subprocess.run(["ps", "aux"], stdout=subprocess.PIPE)
         processes = result.stdout.decode("utf-8").splitlines()
@@ -139,6 +168,13 @@ label_map = {
 
 
 class CustomModel(fom.Model):
+    """将 D-FINE 模型封装为 FiftyOne 兼容的推理模型
+
+    - 读取 YAML 配置的 `model` 与 `postprocessor`，置于 eval 模式并迁移到 GPU；
+    - 使用 `torchvision.transforms` 将输入图像转为张量并缩放到 `(640, 640)`；
+    - `predict`/`predict_all` 方法返回 FiftyOne 的 `Detections` 对象用于可视化；
+    - `_convert_predictions` 负责将模型输出的框/类别/分数转换为归一化的检测结果。
+    """
     def __init__(self, cfg):
         super().__init__()
         self.model = cfg.model.eval().cuda()
@@ -180,6 +216,16 @@ class CustomModel(fom.Model):
         pass
 
     def _convert_predictions(self, predictions):
+        """将模型输出转换为 FiftyOne `Detections`
+
+        参数：
+        - `predictions`: D-FINE 后处理器输出的列表，每个元素包含 `labels`、`boxes`、`scores`
+
+        行为：
+        - 将 `labels` 通过 `label_map` 映射为字符串类别；
+        - 将 `boxes` 从像素坐标转换为 [0,1] 归一化坐标（除以 640）；
+        - 组装为 `fol.Detections` 返回。
+        """
         class_labels, bboxes, scores = (
             predictions[0]["labels"],
             predictions[0]["boxes"],
@@ -203,6 +249,12 @@ class CustomModel(fom.Model):
         return fol.Detections(detections=detections)
 
     def predict(self, image):
+        """对单张图片进行推理并返回 `Detections`
+
+        - 输入：`image` 为 Numpy 数组（FiftyOne 传入）
+        - 过程：PIL 转换 → 预处理（ToTensor+Resize）→ 前向 → 后处理 → 转换
+        - 输出：`fol.Detections`
+        """
         image = Image.fromarray(image).convert("RGB")
         image_tensor = self.transform(image).unsqueeze(0).cuda()
         outputs = self.model(image_tensor)
@@ -211,6 +263,11 @@ class CustomModel(fom.Model):
         return self._convert_predictions(predictions)
 
     def predict_all(self, images):
+        """对一批图片进行推理
+
+        - 输入：`images` 列表（Numpy 数组）
+        - 输出：`List[Detections]` 与 `apply_model` 的批量接口兼容
+        """
         image_tensors = []
         for image in images:
             image = Image.fromarray(image)
@@ -227,6 +284,16 @@ class CustomModel(fom.Model):
 
 
 def filter_by_predictions5_confidence(predictions_view, confidence_threshold=0.3):
+    """使用另一评估层的置信度更新预测结果
+
+    该函数示例化了跨不同 `eval_idx` 的置信度对齐逻辑：当 `predictions0` 与
+    `predictions5` 在阈值两侧出现“交叉”，则用更高置信度替换低置信度，
+    并记录原始置信度以便后续恢复。
+
+    参数：
+    - `predictions_view`: FiftyOne 视图对象（含 `predictions0` 与 `predictions5` 字段）
+    - `confidence_threshold`: 判定交叉的阈值（默认 0.3）
+    """
     for j, sample in tqdm.tqdm(enumerate(predictions_view), total=len(predictions_view)):
         has_modified = False
         for i, detection in enumerate(sample["predictions0"].detections):
@@ -249,6 +316,10 @@ def filter_by_predictions5_confidence(predictions_view, confidence_threshold=0.3
 
 
 def restore_confidence(predictions_view):
+    """恢复 `filter_by_predictions5_confidence` 修改过的置信度
+
+    遍历视图，将带有 `original_confidence` 的检测置信度回滚到原值。
+    """
     for j, sample in tqdm.tqdm(enumerate(predictions_view), total=len(predictions_view)):
         for i, detection in enumerate(sample["predictions0"].detections):
             if "original_confidence" in detection:
@@ -257,6 +328,12 @@ def restore_confidence(predictions_view):
 
 
 def fast_iou(bbox1, bbox2):
+    """计算两个归一化框的 IoU（xywh 格式）
+
+    参数：
+    - `bbox1`/`bbox2`: `[x, y, w, h]`，归一化坐标
+    返回：IoU 浮点数
+    """
     x1, y1, w1, h1 = bbox1
     x2, y2, w2, h2 = bbox2
     xA = max(x1, x2)
@@ -271,6 +348,12 @@ def fast_iou(bbox1, bbox2):
 
 
 def assign_iou_diff(predictions_view):
+    """为不同评估层的检测结果分配 IoU 差异标记
+
+    - 从 `predictions0` 与 `predictions5` 读取评估结果 `eval0_iou` 与 `eval5_iou`；
+    - 若两个框的交并比（互相重叠程度）大于 0.5，则记录两者 IoU 的绝对差；
+    - 将差异写入每个检测的 `iou_diff` 字段，便于基于差异的筛选。
+    """
     for sample in predictions_view:
         ious_0 = [
             detection.eval0_iou if "eval0_iou" in detection else None
@@ -301,6 +384,17 @@ def assign_iou_diff(predictions_view):
 
 
 def main(args):
+    """主执行流程：加载数据、模型，推理、评估、导出与展示
+
+    - 若存在已导出的视图目录 `saved_predictions_view`/`saved_filtered_view`，直接载入；
+    - 否则：
+      1) 从 FiftyOne zoo 加载 COCO-2017 验证集并启动 App；
+      2) 使用 `YAMLConfig` 读入配置与 checkpoint，构建模型并加载权重；
+      3) 选取 100 张样本组成视图，按当前解码器评估层 `eval_idx=L` 运行推理；
+      4) 对 `predictions{L}` 字段按置信度过滤并计算 mAP；
+      5) 导出预测视图到 `saved_predictions_view` 目录；
+    - 最后将会话置为该视图并保持运行，直至进程结束。
+    """
     try:
         if os.path.exists("saved_predictions_view") and os.path.exists("saved_filtered_view"):
             print("Loading saved predictions and filtered views...")
