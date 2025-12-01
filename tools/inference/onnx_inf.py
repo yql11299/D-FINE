@@ -51,10 +51,10 @@ def draw(images, labels, boxes, scores, ratios, paddings, thrh=0.4):
     return result_images
 
 
-def process_image(sess, im_pil):
+def process_image(sess, im_pil, size):
     # Resize image while preserving aspect ratio
-    resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, 640)
-    orig_size = torch.tensor([[resized_im_pil.size[1], resized_im_pil.size[0]]])
+    resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, size)
+    orig_size = torch.tensor([[resized_im_pil.size[1], resized_im_pil.size[0]]], dtype=torch.float32)
 
     transforms = T.Compose(
         [
@@ -75,7 +75,7 @@ def process_image(sess, im_pil):
     print("Image processing complete. Result saved as 'result.jpg'.")
 
 
-def process_video(sess, video_path):
+def process_video(sess, video_path, size):
     cap = cv2.VideoCapture(video_path)
 
     # Get video properties
@@ -98,8 +98,8 @@ def process_video(sess, video_path):
         frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
         # Resize frame while preserving aspect ratio
-        resized_frame_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(frame_pil, 640)
-        orig_size = torch.tensor([[resized_frame_pil.size[1], resized_frame_pil.size[0]]])
+        resized_frame_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(frame_pil, size)
+        orig_size = torch.tensor([[resized_frame_pil.size[1], resized_frame_pil.size[0]]], dtype=torch.float32)
 
         transforms = T.Compose(
             [
@@ -145,19 +145,22 @@ def main(args):
     try:
         # Try to open the input as an image
         im_pil = Image.open(input_path).convert("RGB")
-        process_image(sess, im_pil)
+        process_image(sess, im_pil, args.img_size)
     except IOError:
         # Not an image, process as video
-        process_video(sess, input_path)
+        process_video(sess, input_path, args.img_size)
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--onnx", type=str, required=True, help="Path to the ONNX model file.")
+    parser.add_argument("--onnx", type=str, default=r"output\dfine_hgnetv2_s_custom\best_stg1.onnx", help="Path to the ONNX model file.")
     parser.add_argument(
-        "--input", type=str, required=True, help="Path to the input image or video file."
+        "--input", type=str, default=r"asset\test_image\zzzmmmhhh_01#12191314294562.jpg", help="Path to the input image or video file."
+    )
+    parser.add_argument(
+        "--img-size", type=int, default=320, help="Resize square size for inference (e.g., 320)"
     )
     args = parser.parse_args()
     main(args)

@@ -1,4 +1,5 @@
 output/
+models/
 weight/
 *.pyc
 wandb/

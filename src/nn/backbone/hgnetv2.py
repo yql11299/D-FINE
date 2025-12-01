@@ -163,7 +163,7 @@ class StemBlock(nn.Module):
             stride=1,
             use_lab=use_lab,
         )
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=1, ceil_mode=True)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=1, ceil_mode=False)
 
     def forward(self, x):
         x = self.stem1(x)

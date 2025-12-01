@@ -11,7 +11,7 @@ train_dataloader:
   type: DataLoader
   dataset:
     type: YOLOTxtDetection
-    list_file: /media/ai/Data_SSD1/yql/datasets/kc/customized/nmsr/old/train.txt
+    list_file: G:\datasets\chupin\nmsr\train_data\merge\train.txt
     transforms:
       type: Compose
       ops: ~
@@ -26,7 +26,7 @@ val_dataloader:
   type: DataLoader
   dataset:
     type: YOLOTxtDetection
-    list_file: /media/ai/Data_SSD1/yql/datasets/kc/customized/nmsr/old/val.txt
+    list_file: G:\datasets\chupin\nmsr\train_data\merge\eval.txt
     transforms:
       type: Compose
       ops: ~

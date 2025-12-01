@@ -88,6 +88,12 @@ class HungarianMatcher(nn.Module):
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_bbox = torch.cat([v["boxes"] for v in targets])
 
+        # Sanitize predicted and target boxes to avoid NaNs and invalid widths/heights
+        out_bbox = torch.nan_to_num(out_bbox)
+        tgt_bbox = torch.nan_to_num(tgt_bbox)
+        out_bbox[:, 2:] = out_bbox[:, 2:].clamp(min=0.0)
+        tgt_bbox[:, 2:] = tgt_bbox[:, 2:].clamp(min=0.0)
+
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
         # The 1 is a constant that doesn't change the matching, it can be ommitted.

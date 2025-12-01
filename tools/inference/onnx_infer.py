@@ -12,7 +12,7 @@
 - 不进行类别过滤（`--classe` 不指定或为空）。
 
 输入与识别：
-- `-i/--input` 可以是：
+- `-i/--input` ：
   - 单张图像路径（jpg/png/bmp/webp）；
   - 图像目录（自动收集支持扩展名）；
   - txt 文件（每行一个图像绝对/相对路径）。
@@ -39,6 +39,7 @@ import sys
 
 import cv2  # Added for video processing
 import numpy as np
+import onnxruntime as ort
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
@@ -48,6 +49,20 @@ import xml.etree.ElementTree as ET
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.core import YAMLConfig
 from src.data.dataset.coco_dataset import mscoco_label2category, mscoco_category2name
+
+def resize_with_aspect_ratio(image, size, interpolation=Image.BILINEAR):
+    """Resizes an image while maintaining aspect ratio and pads it."""
+    original_width, original_height = image.size
+    ratio = min(size / original_width, size / original_height)
+    new_width = int(original_width * ratio)
+    new_height = int(original_height * ratio)
+    image = image.resize((new_width, new_height), interpolation)
+
+    # Create a new image with the desired size and paste the resized image onto it
+    new_image = Image.new("RGB", (size, size))
+    new_image.paste(image, ((size - new_width) // 2, (size - new_height) // 2))
+    return new_image, ratio, (size - new_width) // 2, (size - new_height) // 2
+
 
 
 def _filter_by_thresh_and_classes(labs, bxs, scrs, thrh, allowed_classes):
@@ -66,6 +81,41 @@ def _filter_by_thresh_and_classes(labs, bxs, scrs, thrh, allowed_classes):
         out_b.append(box)
         out_s.append(sc)
     return out_l, out_b, out_s
+
+def correct_box(batch_boxes, ratio, pad_w, pad_h):
+    """根据缩放比例与填充修正框坐标，支持 numpy 数组输入"""
+    
+    # 检查输入类型，确保是 numpy 数组
+    if not isinstance(batch_boxes, np.ndarray):
+        batch_boxes = np.array(batch_boxes)
+    
+    # 确保至少是2维数组
+    if batch_boxes.ndim < 2:
+        raise ValueError("batch_boxes 至少应该是2维数组")
+    
+    # 保存原始形状以便后续恢复
+    original_shape = batch_boxes.shape
+    
+    # 重塑为 [num_boxes, 4] 的形状
+    if batch_boxes.ndim > 2:
+        batch_boxes = batch_boxes.reshape(-1, 4)
+    
+    # 向量化计算，一次性处理所有框
+    batch_boxes[:, 0] = (batch_boxes[:, 0] - pad_w) / ratio
+    batch_boxes[:, 1] = (batch_boxes[:, 1] - pad_h) / ratio
+    batch_boxes[:, 2] = (batch_boxes[:, 2] - pad_w) / ratio
+    batch_boxes[:, 3] = (batch_boxes[:, 3] - pad_h) / ratio
+    
+    # # 向量化计算，一次性处理所有框
+    # batch_boxes[:, 0] = (batch_boxes[:, 0] - pad_w) / ratio
+    # batch_boxes[:, 1] = (batch_boxes[:, 1] - pad_h) 
+    # batch_boxes[:, 2] = (batch_boxes[:, 2] - pad_w) / ratio
+    # batch_boxes[:, 3] = (batch_boxes[:, 3] - pad_h) 
+    
+    # 恢复原始形状
+    batch_boxes = batch_boxes.reshape(original_shape)
+    
+    return batch_boxes
 
 
 def draw(images, labels, boxes, scores, thrh=0.4, allowed_classes=None, remap_map=None):
@@ -159,15 +209,38 @@ def save_voc_labels(path, img_filename, boxes, labels, scores, w, h, thrh, allow
     tree.write(path, encoding="utf-8")
 
 
-def process_image(model, input_size, device, file_path, visualize=False, out_vis_dir=None, label_format="none", out_label_dir=None, score_thresh=0.4, allowed_classes=None, remap_map=None):
+def process_image(sess, file_path, size, visualize=False, out_vis_dir=None, label_format="none", out_label_dir=None, score_thresh=0.4, allowed_classes=None, remap_map=None):
     im_pil = Image.open(file_path).convert("RGB")
-    w, h = im_pil.size
-    orig_size = torch.tensor([[w, h]]).to(device)
-    transforms = T.Compose([T.Resize((input_size[0], input_size[1])), T.ToTensor()])
-    im_data = transforms(im_pil).unsqueeze(0).to(device)
-    labels, boxes, scores = model(im_data, orig_size)
+    print(im_pil.size)
+    resized_im_pil, ratio, pad_w, pad_h = resize_with_aspect_ratio(im_pil, size)
+    # resized_im_pil = im_pil.resize((size, size))
+
+    orig_size = torch.tensor([[resized_im_pil.size[1], resized_im_pil.size[0]]], dtype=torch.float32)
+
+    transforms = T.Compose(
+        [
+            T.ToTensor(),
+        ]
+    )
+    im_data = transforms(resized_im_pil).unsqueeze(0)
+    
+    print(im_data.shape)
+
+    output = sess.run(
+        output_names=None,
+        input_feed={"images": im_data.numpy(), "orig_target_sizes": orig_size.numpy()},
+    )
+
+    labels, boxes, scores = output
     
     print(boxes)
+    
+    print(ratio, pad_w, pad_h)
+    
+    # 修正框坐标
+    boxes = correct_box(boxes, ratio, pad_w, pad_h)
+    
+    # print(boxes)
 
     if visualize and out_vis_dir is not None:
         vis_list = draw([im_pil], labels, boxes, scores, thrh=score_thresh, allowed_classes=allowed_classes, remap_map=remap_map)
@@ -182,59 +255,6 @@ def process_image(model, input_size, device, file_path, visualize=False, out_vis
             save_yolo_labels(os.path.join(out_label_dir, base + ".txt"), boxes[0], labels[0], scores[0], w, h, score_thresh, allowed_classes=allowed_classes, remap_map=remap_map)
         elif label_format == "voc":
             save_voc_labels(os.path.join(out_label_dir, base + ".xml"), file_path, boxes[0], labels[0], scores[0], w, h, score_thresh, allowed_classes=allowed_classes, remap_map=remap_map)
-
-
-def process_video(model, device, file_path):
-    cap = cv2.VideoCapture(file_path)
-
-    # Get video properties
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # Define the codec and create VideoWriter object
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter("torch_results.mp4", fourcc, fps, (orig_w, orig_h))
-
-    transforms = T.Compose(
-        [
-            T.Resize((640, 640)),
-            T.ToTensor(),
-        ]
-    )
-
-    frame_count = 0
-    print("Processing video frames...")
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # Convert frame to PIL image
-        frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-
-        w, h = frame_pil.size
-        orig_size = torch.tensor([[w, h]]).to(device)
-
-        im_data = transforms(frame_pil).unsqueeze(0).to(device)
-
-        output = model(im_data, orig_size)
-        labels, boxes, scores = output
-
-        vis_list = draw([frame_pil], labels, boxes, scores)
-
-        frame = cv2.cvtColor(np.array(vis_list[0]), cv2.COLOR_RGB2BGR)
-
-        # Write the frame
-        out.write(frame)
-        frame_count += 1
-
-        if frame_count % 10 == 0:
-            print(f"Processed {frame_count} frames...")
-
-    cap.release()
-    out.release()
-    print("Video processing complete. Result saved as 'results_video.mp4'.")
 
 
 def collect_image_paths(input_path):
@@ -287,37 +307,9 @@ def resolve_remap(remap_arg):
 
 def main(args):
     """Main function"""
-    cfg = YAMLConfig(args.config, resume=args.resume)
-
-    if "HGNetv2" in cfg.yaml_cfg:
-        cfg.yaml_cfg["HGNetv2"]["pretrained"] = False
-
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location="cpu")
-        if "ema" in checkpoint:
-            state = checkpoint["ema"]["module"]
-        else:
-            state = checkpoint["model"]
-    else:
-        raise AttributeError("Only support resume to load model.state_dict by now.")
-
-    # Load train mode state and convert to deploy mode
-    cfg.model.load_state_dict(state)
-
-    class Model(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.model = cfg.model.deploy()
-            self.postprocessor = cfg.postprocessor.deploy()
-
-        def forward(self, images, orig_target_sizes):
-            outputs = self.model(images)
-            outputs = self.postprocessor(outputs, orig_target_sizes)
-            return outputs
-
-    device = args.device
-    input_size = args.input_size
-    model = Model().to(device)
+    # Load the ONNX model
+    sess = ort.InferenceSession(args.model)
+    print(f"Using device: {ort.get_device()}")
 
     file_path = args.input
     paths = collect_image_paths(file_path)
@@ -328,10 +320,9 @@ def main(args):
         remap_map = resolve_remap(args.remap)
         for p in paths:
             process_image(
-                model,
-                input_size,
-                device,
+                sess,
                 p,
+                args.input_size,
                 visualize=args.visualize,
                 out_vis_dir=vis_dir,
                 label_format=args.label_format,
@@ -342,20 +333,19 @@ def main(args):
             )
         print(f"Processed {len(paths)} images.")
     else:
-        process_video(model, device, file_path)
+        raise ValueError
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config", type=str, default=r"configs\dfine\custom\dfine_hgnetv2_s_custom.yml")
-    parser.add_argument("-r", "--resume", type=str, default=r"output\dfine_hgnetv2_s_custom\best_stg1.pth")
-    parser.add_argument("--input-size", type=int, nargs=2, default=[320, 320])
+    parser.add_argument("-r", "--model", type=str, default=r"output\dfine_hgnetv2_s_custom\best_stg1.onnx")
+    parser.add_argument("--input-size", type=int, default=320)
     parser.add_argument("-i", "--input", type=str, default=r"asset\test_image\zzzmmmhhh_01#12191314294562.jpg")
     parser.add_argument("-d", "--device", type=str, default="cpu")
     parser.add_argument("--visualize", action="store_true", default=True)
-    parser.add_argument("--output-dir", type=str, default="./output/torch_inf")
+    parser.add_argument("--output-dir", type=str, default="./output/onnx_infer")
     parser.add_argument("--label-format", type=str, choices=["none", "voc", "yolo"], default="none")
     parser.add_argument("--score-thresh", type=float, default=0.6)
     parser.add_argument("--classe", type=int, nargs='*', default=[0], help="可选类别过滤列表（整数 ID），为空表示不过滤")

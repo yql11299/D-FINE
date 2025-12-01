@@ -1,5 +1,5 @@
 __include__: [
-  '../../dataset/custom_detection.yml',
+  '../../dataset/yolo_txt_detection.yml',
   '../../runtime.yml',
   '../include/dataloader.yml',
   '../include/optimizer.yml',
@@ -7,6 +7,8 @@ __include__: [
 ]
 
 output_dir: ./output/dfine_hgnetv2_s_custom
+
+eval_spatial_size: [320, 320]
 
 
 DFINE:
@@ -43,7 +45,7 @@ optimizer:
       params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.0004
+  lr: 0.0001
   betas: [0.9, 0.999]
   weight_decay: 0.0001
 
@@ -51,7 +53,7 @@ optimizer:
 # Increase to search for the optimal ema
 epochs: 220
 train_dataloader:
-  total_batch_size: 64
+  total_batch_size: 16
   dataset:
     transforms:
       policy:
@@ -62,4 +64,4 @@ train_dataloader:
     base_size_repeat: 20
 
 val_dataloader:
-  total_batch_size: 128
+  total_batch_size: 16

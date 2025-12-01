@@ -21,7 +21,7 @@ def main(
     args,
 ):
     """main"""
-    cfg = YAMLConfig(args.config, resume=args.resume)
+    cfg = YAMLConfig(args.config, resume=args.resume, eval_spatial_size=args.img_size)
 
     if "HGNetv2" in cfg.yaml_cfg:
         cfg.yaml_cfg["HGNetv2"]["pretrained"] = False
@@ -55,8 +55,10 @@ def main(
 
     model = Model()
 
-    data = torch.rand(32, 3, 640, 640)
-    size = torch.tensor([[640, 640]])
+    batch = args.batch
+    h, w = args.img_size
+    data = torch.rand(batch, 3, h, w)
+    size = torch.tensor([[w, h]], dtype=torch.float32).repeat(batch, 1)
     _ = model(data, size)
 
     dynamic_axes = {
@@ -106,12 +108,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         "-c",
-        default="configs/dfine/dfine_hgnetv2_l_coco.yml",
+        default=r"configs\dfine\dfine_hgnetv2_n_coco.yml",
         type=str,
     )
     parser.add_argument(
         "--resume",
         "-r",
+        default=r"models\pretrained\dfine_n_coco.pth",
         type=str,
     )
     parser.add_argument(
@@ -123,6 +126,17 @@ if __name__ == "__main__":
         "--simplify",
         action="store_true",
         default=True,
+    )
+    parser.add_argument(
+        "--batch",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--img-size",
+        nargs=2,
+        type=int,
+        default=[320, 320], 
     )
     args = parser.parse_args()
     main(args)

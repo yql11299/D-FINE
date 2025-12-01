@@ -119,6 +119,7 @@ def translate_gt(gt, reg_max, reg_scale, up):
     indices[invalid_idx_mask_neg] = 0.0
 
     # 边界处理：目标值落在最大刻度右侧（正向越界）
+    invalid_idx_mask_pos = indices >= reg_max
     weight_right[invalid_idx_mask_pos] = 1.0
     weight_left[invalid_idx_mask_pos] = 0.0
     indices[invalid_idx_mask_pos] = reg_max - 0.1

@@ -69,7 +69,7 @@ def train_one_epoch(
         targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
 
         if scaler is not None:
-            with torch.autocast(device_type=str(device), cache_enabled=True):
+            with torch.autocast(device_type=device.type, cache_enabled=True):
                 outputs = model(samples, targets=targets)
 
             if torch.isnan(outputs["pred_boxes"]).any() or torch.isinf(outputs["pred_boxes"]).any():
@@ -84,7 +84,7 @@ def train_one_epoch(
                 new_state["model"] = state
                 dist_utils.save_on_master(new_state, "./NaN.pth")
 
-            with torch.autocast(device_type=str(device), enabled=False):
+            with torch.autocast(device_type=device.type, enabled=False):
                 loss_dict = criterion(outputs, targets, **metas)
 
             loss = sum(loss_dict.values())
