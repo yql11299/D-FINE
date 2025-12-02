@@ -1,7 +1,12 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import os
+import time
+import hashlib
+import logging
+from tqdm import tqdm
 from PIL import Image
 import torch
+import numpy as np
 
 from ...core import register
 from .._misc import convert_to_tv_tensor
@@ -19,10 +24,195 @@ class YOLOTxtDetection(DetDataset):
         list_file: str,
         transforms: Optional[object] = None,
     ):
-        with open(list_file, "r") as f:
-            self.images: List[str] = [ln.strip() for ln in f.readlines() if ln.strip()]
-
+        self.list_file = list_file
         self.transforms = transforms
+        
+        # Read image list
+        with open(list_file, "r") as f:
+            self.all_images: List[str] = [ln.strip() for ln in f.readlines() if ln.strip()]
+            
+        # Cache logic
+        self.cache_dir = os.path.dirname(list_file)
+        list_filename = os.path.basename(list_file).split('.')[0]
+        self.cache_path = os.path.join(self.cache_dir, f"{list_filename}.cache")
+        
+        self.images = self._check_and_load_cache()
+
+    def _check_and_load_cache(self) -> List[str]:
+        """
+        Check if cache exists and is valid. If so, load it.
+        Otherwise, scan dataset, verify labels, and save cache.
+        """
+        if os.path.exists(self.cache_path):
+            try:
+                cache = torch.load(self.cache_path)
+                # 1. Check if image list itself changed (fast check)
+                list_hash = self._get_list_content_hash()
+                if cache.get("list_hash") != list_hash:
+                     print("Image list changed, rescanning...")
+                else:
+                     # 2. Check if any label file changed (slower check, but necessary)
+                     print("Checking label files for updates...")
+                     labels_hash = self._get_labels_state_hash()
+                     if cache.get("labels_hash") == labels_hash and cache.get("version") == 1.0:
+                         print(f"Loaded dataset cache from {self.cache_path}")
+                         return cache["images"]
+                     else:
+                         print("Label files updated or mismatch, rescanning...")
+            except Exception as e:
+                print(f"Failed to load cache: {e}, rescanning...")
+        
+        # Rescan and verify
+        valid_images = self._scan_and_verify()
+        
+        # Recalculate hashes for the new valid set (or the original full set? usually original list defines the scope)
+        # We should store the hash of the INPUT list, so next time we verify against the same INPUT list.
+        list_hash = self._get_list_content_hash()
+        labels_hash = self._get_labels_state_hash()
+        
+        # Save cache
+        cache_data = {
+            "list_hash": list_hash,
+            "labels_hash": labels_hash,
+            "version": 1.0,
+            "images": valid_images,
+        }
+        try:
+            torch.save(cache_data, self.cache_path)
+            print(f"Saved dataset cache to {self.cache_path}")
+        except Exception as e:
+            print(f"Warning: Failed to save dataset cache: {e}")
+            
+        return valid_images
+
+    def _get_list_content_hash(self) -> str:
+        """Hash of the image list file content"""
+        return hashlib.md5("".join(self.all_images).encode('utf-8')).hexdigest()
+
+    def _get_labels_state_hash(self) -> str:
+        """
+        Calculate hash based on label files' mtime and size.
+        This ensures any modification to label files invalidates cache.
+        """
+        hash_content = []
+        # We use tqdm here because for large datasets this stat operation can take a moment
+        for img_path in tqdm(self.all_images, desc="Checking file states", leave=False):
+            label_path = self._label_path_from_image(img_path)
+            try:
+                stat = os.stat(label_path)
+                # Use size and mtime for uniqueness
+                hash_content.append(f"{stat.st_size}_{stat.st_mtime}")
+            except FileNotFoundError:
+                # If label missing, mark as missing in hash
+                hash_content.append("missing")
+        
+        return hashlib.md5("".join(hash_content).encode('utf-8')).hexdigest()
+
+    def _scan_and_verify(self) -> List[str]:
+        print(f"Scanning and verifying {len(self.all_images)} images...")
+        valid_images = []
+        invalid_count = 0
+        empty_label_count = 0  # Count for background images (no label file or empty file)
+        
+        # Use tqdm for progress bar
+        pbar = tqdm(self.all_images, desc="Verifying data")
+        
+        for img_path in pbar:
+            try:
+                is_valid, is_empty = self._verify_item(img_path)
+                if is_valid:
+                    valid_images.append(img_path)
+                    if is_empty:
+                        empty_label_count += 1
+                else:
+                    invalid_count += 1
+            except Exception as e:
+                print(f"\nError verifying {img_path}: {e}")
+                invalid_count += 1
+                
+        print(f"\nScan completed. Valid: {len(valid_images)}, Invalid: {invalid_count}")
+        print(f"Background images (no labels): {empty_label_count}")
+        return valid_images
+
+    def _verify_item(self, image_path: str) -> tuple[bool, bool]:
+        """
+        Returns:
+            (is_valid, is_empty_label)
+        """
+        # 1. Check image existence
+        if not os.path.exists(image_path):
+            print(f"\n[Missing Image] {image_path}")
+            return False, False
+            
+        try:
+            # Verify image file integrity (Fast check: only read header)
+            # We avoid img.verify() as it reads the whole file which is slow.
+            # Just opening and getting size is enough to catch empty/non-image files.
+            with Image.open(image_path) as img:
+                w, h = img.size
+        except Exception as e:
+            print(f"\n[Corrupt Image] {image_path}: {e}")
+            return False, False
+            
+        # 2. Check label existence
+        label_path = self._label_path_from_image(image_path)
+        if not os.path.exists(label_path):
+            # Missing label file -> Background image -> Valid
+            return True, True
+
+        # 3. Verify label content
+        try:
+            with open(label_path, "r") as f:
+                lines = f.readlines()
+                
+            # If file is empty, it's a valid background image
+            if not lines:
+                return True, True
+                
+            for i, ln in enumerate(lines):
+                ln = ln.strip()
+                if not ln:
+                    continue
+                    
+                parts = ln.split()
+                if len(parts) < 5:
+                    print(f"\n[Invalid Format] Line {i+1} in {label_path}: insufficient parts")
+                    return False, False
+                    
+                # Parse
+                try:
+                    cls = int(float(parts[0]))
+                    cx, cy, bw, bh = map(float, parts[1:5])
+                except ValueError:
+                    print(f"\n[Parse Error] Line {i+1} in {label_path}: value error")
+                    return False, False
+                
+                # Check 1: Normalized range [0, 1] with small tolerance
+                # Allowing slightly out of bound due to floating point issues or augmentation
+                tol = 1e-6
+                if not (-tol <= cx <= 1+tol and -tol <= cy <= 1+tol and 
+                        0 < bw <= 1+tol and 0 < bh <= 1+tol):
+                    print(f"\n[Out of Bounds] {label_path} Line {i+1}: cx={cx}, cy={cy}, w={bw}, h={bh}")
+                    return False, False
+                    
+                # Check 2: Box validity (xmin < xmax, ymin < ymax) implicitly checked by w>0, h>0
+                # Convert to pixel coords to be sure
+                x1 = (cx - bw / 2) * w
+                y1 = (cy - bh / 2) * h
+                x2 = (cx + bw / 2) * w
+                y2 = (cy + bh / 2) * h
+                
+                # Check 3: Pixel boundary check (strict)
+                # Allow small tolerance for rounding
+                if x1 < -1 or y1 < -1 or x2 > w + 1 or y2 > h + 1:
+                     print(f"\n[Box Out of Image] {label_path} Line {i+1}: box={x1,y1,x2,y2}, img={w,h}")
+                     return False, False
+                
+            return True, False # Valid and Not Empty
+
+        except Exception as e:
+             print(f"\n[Read Error] {label_path}: {e}")
+             return False, False
 
     def __len__(self):
         return len(self.images)

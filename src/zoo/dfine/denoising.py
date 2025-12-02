@@ -41,8 +41,15 @@ def get_contrastive_denoising_training_group(
     for i in range(bs):
         num_gt = num_gts[i]
         if num_gt > 0:
-            input_query_class[i, :num_gt] = targets[i]["labels"]
-            input_query_bbox[i, :num_gt] = targets[i]["boxes"]
+            # 安全检查：确保 boxes 和 labels 长度一致，取最小值
+            num_boxes = len(targets[i]["boxes"])
+            if num_boxes != num_gt:
+                print(f"WARNING: Data mismatch in batch {i}. Labels: {num_gt}, Boxes: {num_boxes}. Truncating to min.")
+                num_gt = min(num_gt, num_boxes)
+                # 更新 num_gts[i] 以防后续逻辑出错 (虽然 max_gt_num 已经定下来了，但这能保证当前循环安全)
+            
+            input_query_class[i, :num_gt] = targets[i]["labels"][:num_gt]
+            input_query_bbox[i, :num_gt] = targets[i]["boxes"][:num_gt]
             pad_gt_mask[i, :num_gt] = 1
     # each group has positive and negative queries.
     input_query_class = input_query_class.tile([1, 2 * num_group])
