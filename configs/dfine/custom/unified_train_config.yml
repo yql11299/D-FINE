@@ -36,7 +36,7 @@ train_dataloader:
         epoch: 60 # epoch in [71, ~) stop `ops`
         ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
   shuffle: False
-  num_workers: 8
+  num_workers: 4
   drop_last: True
   collate_fn:
     type: BatchImageCollateFunction
@@ -58,7 +58,7 @@ val_dataloader:
         - {type: PadToSize, size: [320, 320], fill: 0}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
-  num_workers: 8
+  num_workers: 4
   drop_last: False
   collate_fn:
     type: BatchImageCollateFunction
