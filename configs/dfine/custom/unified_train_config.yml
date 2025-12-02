@@ -29,6 +29,7 @@ train_dataloader:
         - {type: LetterBoxResize, size: 320} 
         - {type: PadToSize, size: [320, 320], fill: 0}
         # - {type: SanitizeBoundingBoxes, min_size: 1} # Redundant without CropConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
       policy:
         name: stop_epoch
