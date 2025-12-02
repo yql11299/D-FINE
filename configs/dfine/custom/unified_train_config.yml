@@ -38,7 +38,7 @@ train_dataloader:
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
       policy:
         name: stop_epoch
-        epoch: 60 # epoch in [71, ~) stop `ops`
+        epoch: 40 # epoch in [71, ~) stop `ops`
         ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
   shuffle: False
   num_workers: 4
@@ -151,7 +151,7 @@ ema:
   warmups: 500
   start: 0
 
-epochs: 80
+epochs: 50
 clip_max_norm: 0.1
 
 optimizer:
