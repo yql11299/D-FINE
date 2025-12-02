@@ -31,6 +31,8 @@ class DFINEPostProcessor(nn.Module):
         self.num_classes = int(num_classes)
         self.remap_mscoco_category = remap_mscoco_category
         self.deploy_mode = False
+        # Default eval size, should be updated by config or inferred
+        self.eval_size = None 
 
     def extra_repr(self) -> str:
         return f"use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}"
@@ -41,7 +43,52 @@ class DFINEPostProcessor(nn.Module):
         # orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
 
         bbox_pred = torchvision.ops.box_convert(boxes, in_fmt="cxcywh", out_fmt="xyxy")
-        bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
+        
+        # --- Letterbox Coordinate Restoration ---
+        # If we know the input size (eval_size), we can reverse the letterbox transform.
+        # We assume eval_size is constant (e.g. [320, 320]). 
+        # If self.eval_size is not set, we fallback to original behavior (direct stretch).
+        
+        if self.eval_size is not None:
+            # Clone to avoid modifying original tensor in place if needed
+            bbox_pred = bbox_pred.clone()
+            
+            # orig_target_sizes is (B, 2) -> (h, w)
+            img_h, img_w = orig_target_sizes.unbind(1)
+            target_h, target_w = self.eval_size
+            
+            # Calculate scale and padding used during preprocessing
+            # scale = min(target_h / img_h, target_w / img_w)
+            scale = torch.min(target_h / img_h, target_w / img_w)
+            
+            # New dimensions after resize
+            new_h = img_h * scale
+            new_w = img_w * scale
+            
+            # Padding (Center Pad)
+            pad_h = (target_h - new_h) / 2
+            pad_w = (target_w - new_w) / 2
+            
+            # bbox_pred is currently normalized (0~1). 
+            # Convert to coordinates on the padded canvas (target_h, target_w)
+            bbox_pred[..., 0::2] *= target_w
+            bbox_pred[..., 1::2] *= target_h
+            
+            # Subtract padding
+            # pad_w, pad_h are shape (B,). bbox_pred is (B, N, 4)
+            bbox_pred[..., 0::2] -= pad_w.unsqueeze(1).unsqueeze(1)
+            bbox_pred[..., 1::2] -= pad_h.unsqueeze(1).unsqueeze(1)
+            
+            # Divide by scale
+            bbox_pred /= scale.unsqueeze(1).unsqueeze(1)
+            
+            # Clip to image boundaries (optional but recommended)
+            # bbox_pred[..., 0::2].clamp_(min=0, max=img_w.unsqueeze(1).unsqueeze(1))
+            # bbox_pred[..., 1::2].clamp_(min=0, max=img_h.unsqueeze(1).unsqueeze(1))
+            
+        else:
+            # Original logic: Direct stretch
+            bbox_pred *= orig_target_sizes.repeat(1, 2).unsqueeze(1)
 
         if self.use_focal_loss:
             scores = F.sigmoid(logits)

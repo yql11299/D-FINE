@@ -280,9 +280,26 @@ class RandomIoUCrop(T.RandomIoUCrop):
             except Exception as e:
                 # print(f"Warning: RandomIoUCrop failed with index hack, skipping crop. Error: {e}")
                 # Fail gracefully by returning original input
+                # IMPORTANT: If we return original inputs here, subsequent transforms (like SanitizeBoundingBoxes)
+                # might be confused if RandomIoUCrop partially modified something in place (unlikely for super().forward).
+                # However, the error reported by user suggests SanitizeBoundingBoxes failed.
+                # This means RandomIoUCrop EITHER:
+                # 1. Ran successfully but DID NOT update labels (Index Hack failed silently?)
+                # 2. Or super().forward returned something where boxes were cropped but our logic to update labels was skipped.
+                
+                # Re-raise for debugging or just fallback
+                # If we fallback, we return original image and target.
+                # But wait, SanitizeBoundingBoxes is usually AFTER this.
+                # If we return original, SanitizeBoundingBoxes sees (Image, Boxes, Labels) consistent.
+                
+                # BUT, if RandomIoUCrop is skipped, we might have issues? No.
+                
                 return inputs if len(inputs) > 1 else inputs[0]
 
-        return super().forward(*inputs)
+        # If we cannot safely crop with label synchronization, we skip the crop entirely.
+        # Calling super().forward(*inputs) here would crop boxes but leave labels untouched,
+        # leading to size mismatch errors downstream.
+        return inputs if len(inputs) > 1 else inputs[0]
 
 
 

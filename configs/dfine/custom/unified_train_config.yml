@@ -5,6 +5,11 @@ __include__: [
 task: detection
 output_dir: ./output/dfine_hgnetv2_s_custom_unified
 
+# --- Global Config ---
+# Define input size once. All other components will reference this.
+eval_spatial_size: &eval_spatial_size [320, 320]
+input_size: &input_size 320
+
 # --- Dataset Config ---
 evaluator:
   type: CocoEvaluator
@@ -26,8 +31,8 @@ train_dataloader:
         - {type: RandomIoUCrop, p: 0.8}
         - {type: SanitizeBoundingBoxes, min_size: 1}
         - {type: RandomHorizontalFlip}
-        - {type: LetterBoxResize, size: 320} 
-        - {type: PadToSize, size: [320, 320], fill: 0}
+        - {type: LetterBoxResize, size: *input_size} 
+        - {type: PadToSize, size: *eval_spatial_size, fill: 0}
         # - {type: SanitizeBoundingBoxes, min_size: 1} # Redundant without CropConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
@@ -40,7 +45,7 @@ train_dataloader:
   drop_last: True
   collate_fn:
     type: BatchImageCollateFunction
-    base_size: 320
+    base_size: *input_size
     base_size_repeat: 20
     stop_epoch: 40
     ema_restart_decay: 0.9999
@@ -54,8 +59,8 @@ val_dataloader:
     transforms:
       type: Compose
       ops:
-        - {type: LetterBoxResize, size: 320}
-        - {type: PadToSize, size: [320, 320], fill: 0}
+        - {type: LetterBoxResize, size: *input_size}
+        - {type: PadToSize, size: *eval_spatial_size, fill: 0}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
   num_workers: 4
@@ -71,7 +76,9 @@ criterion: DFINECriterion
 postprocessor: DFINEPostProcessor
 
 use_focal_loss: True
-eval_spatial_size: [320, 320]
+# eval_spatial_size: [320, 320] # Removed redundant definition, using anchor defined above if needed, or it's used by engine.
+# Actually eval_spatial_size is often used by the solver/engine directly. 
+# We keep the key at top level but use the anchor.
 
 DFINE:
   backbone: HGNetv2
@@ -121,6 +128,7 @@ DFINETransformer:
 
 DFINEPostProcessor:
   num_top_queries: 300
+  eval_size: *eval_spatial_size # Must match Resize/Pad size for correct coordinate restoration
 
 DFINECriterion:
   weight_dict: {loss_vfl: 1, loss_bbox: 5, loss_giou: 2, loss_fgl: 0.15, loss_ddf: 1.5}
