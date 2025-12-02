@@ -97,6 +97,66 @@ class PadToSize(T.Pad):
 
 
 @register()
+class LetterBoxResize(T.Resize):
+    """
+    Resizes the image so that the longest edge is equal to `size`, preserving aspect ratio.
+    The short edge is scaled accordingly.
+    This is equivalent to T.Resize(size=smaller_edge, max_size=target_size), but handles the
+    calculation automatically to avoid 'max_size > size' errors.
+    """
+    def __init__(self, size, interpolation=T.InterpolationMode.BILINEAR, antialias=True):
+        # We don't pass size/max_size to super().__init__ here because we'll calculate them dynamically
+        # or use a safe default. Actually T.Resize stores them.
+        # To implement "longest edge = size", we can set size=size, max_size=size? 
+        # No, that fails validation.
+        
+        # Strategy: We act as a wrapper. We don't rely on super().forward to handle the logic if it's restrictive.
+        # But we want to reuse its implementation.
+        
+        # Ideally: size=int, max_size=int.
+        # If we set size=size, max_size=None -> Shortest edge = size. (Wrong for letterbox)
+        # If we set size=1, max_size=size -> Longest edge = size. (Correct logic, but validation might fail if size is too small?)
+        # Actually, validation says max_size > size.
+        # So we set self.target_size = size
+        super().__init__(size=size, interpolation=interpolation, antialias=antialias)
+        self.target_size = size
+
+    def forward(self, *inputs):
+        # We need to inspect the image size to decide the correct 'size' parameter for T.Resize
+        # so that the result's longest edge is self.target_size.
+        
+        # Inputs can be (image, target) or just image.
+        inpt = inputs if len(inputs) > 1 else inputs[0]
+        if isinstance(inpt, (list, tuple)) and len(inpt) >= 1:
+            image = inpt[0]
+        else:
+            image = inpt
+            
+        # Get current size
+        h, w = F.get_size(image)
+        
+        # Calculate scale to fit into target_size x target_size
+        scale = self.target_size / max(h, w)
+        new_h, new_w = int(h * scale), int(w * scale)
+        
+        # Now we have the exact target dimensions.
+        # We can use T.Resize((new_h, new_w)) which specifies (h, w) directly.
+        # This bypasses the size/max_size logic for shortest/longest edge.
+        
+        # We create a temporary Resize transform or call F.resize directly
+        # But we need to handle all inputs (image, boxes, masks, etc.)
+        # The cleanest way is to use F.resize, but we need to handle multiple inputs.
+        # Or, we can just update self.size to be (new_h, new_w) temporarily?
+        # No, self.size is shared.
+        
+        # Better: use the functional API which handles structure automatically in v2?
+        # No, F.resize is for single tensor.
+        
+        # We can construct a new T.Resize((new_h, new_w)) and call it.
+        # Note: T.Resize accepts a sequence for size to specify (h, w).
+        return T.Resize(size=(new_h, new_w), interpolation=self.interpolation, antialias=self.antialias)(*inputs)
+
+@register()
 class RandomIoUCrop(T.RandomIoUCrop):
     def __init__(
         self,
