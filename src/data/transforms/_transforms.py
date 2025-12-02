@@ -72,10 +72,15 @@ class PadToSize(T.Pad):
             size = (size, size)
         self.size = size
         super().__init__(0, fill, padding_mode)
-        self._fill[PIL.Image.Image] = fill
+        self.fill = fill
 
     def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        fill = self._fill[type(inpt)]
+        fill = self.fill
+        if isinstance(inpt, Mask):
+            fill = 0
+        elif isinstance(fill, dict):
+            fill = fill.get(type(inpt), 0)
+        
         padding = params["padding"]
         return F.pad(inpt, padding=padding, fill=fill, padding_mode=self.padding_mode)  # type: ignore[arg-type]
 
