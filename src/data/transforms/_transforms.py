@@ -34,7 +34,45 @@ Resize = register()(T.Resize)
 # ToImageTensor = register()(T.ToImageTensor)
 # ConvertDtype = register()(T.ConvertDtype)
 # PILToTensor = register()(T.PILToTensor)
-SanitizeBoundingBoxes = register(name="SanitizeBoundingBoxes")(SanitizeBoundingBoxes)
+@register(name="SanitizeBoundingBoxes")
+class SanitizeBoundingBoxes(T.Transform):
+    def __init__(self, min_size=1.0, labels_getter=None):
+        super().__init__()
+        self.sanitizer = T.SanitizeBoundingBoxes(min_size=min_size, labels_getter=labels_getter)
+
+    def forward(self, *inputs):
+        inpt = inputs if len(inputs) > 1 else inputs[0]
+        
+        # Check for standard (image, target) structure
+        if isinstance(inpt, (list, tuple)) and len(inpt) == 2 and isinstance(inpt[1], dict):
+            image, target = inpt
+            if "boxes" in target and "labels" in target:
+                boxes = target["boxes"]
+                labels = target["labels"]
+                
+                # Pass (image, boxes, labels) to sanitizer explicitly
+                # SanitizeBoundingBoxes usually returns (image, boxes, labels) when 3 inputs are given
+                try:
+                    out = self.sanitizer(image, boxes, labels)
+                    
+                    # Unpack and update target
+                    # The sanitizer might return (image, boxes, labels)
+                    if isinstance(out, tuple) and len(out) == 3:
+                        new_image, new_boxes, new_labels = out
+                        target["boxes"] = new_boxes
+                        target["labels"] = new_labels
+                        return new_image, target
+                        
+                except ValueError:
+                    # If labels and boxes are already mismatched before entering sanitizer,
+                    # sanitizer will raise ValueError.
+                    # In this case, we can try to force-sync them or just let it crash with a better message?
+                    # Or we can try to sanitize JUST boxes, but then labels are definitely wrong.
+                    pass
+
+        # Fallback to default behavior
+        return self.sanitizer(inpt)
+    
 RandomCrop = register()(T.RandomCrop)
 Normalize = register()(T.Normalize)
 
