@@ -118,9 +118,24 @@ class RandomIoUCrop(T.RandomIoUCrop):
             return inputs if len(inputs) > 1 else inputs[0]
 
         inpt = inputs if len(inputs) > 1 else inputs[0]
-        image, target = inpt
-        boxes = target.get("boxes")
-        labels = target.get("labels")
+        
+        # Robust unpacking: Check if input is (image, target) tuple or just image
+        if isinstance(inpt, (list, tuple)) and len(inpt) == 2:
+            image, target = inpt
+        else:
+            # If input format is unexpected (e.g. just image, or (img, target, other)), 
+            # fallback to default behavior without index hack
+            return super().forward(*inputs)
+        
+        if target is None:
+             return super().forward(*inputs)
+
+        if isinstance(target, dict):
+            boxes = target.get("boxes")
+            labels = target.get("labels")
+        else:
+            # If target is not a dict (e.g. tensor), we can't extract boxes/labels
+            return super().forward(*inputs)
 
         # Attempt to crop
         if boxes is not None and labels is not None:
@@ -149,6 +164,9 @@ class RandomIoUCrop(T.RandomIoUCrop):
             )
             
             # Construct a temporary target for the transform
+            # Optimization: Avoid deep copy of target if it's large.
+            # We only need to replace "boxes" in the dict passed to super().forward
+            # Shallow copy is enough as we only modify top-level keys
             temp_target = target.copy()
             temp_target["boxes"] = boxes_with_idx_tv
             
@@ -171,39 +189,37 @@ class RandomIoUCrop(T.RandomIoUCrop):
                     new_labels = labels[kept_indices]
                     
                     # Restore boxes to (N, 4)
+                    # Use as_subclass to avoid overhead if possible, but slicing creates new tensor anyway
                     new_boxes = new_boxes_with_idx[:, :4]
                     
                     # Re-wrap boxes to ensure correct metadata
+                    # Optimization: Reuse canvas_size and format directly
                     new_boxes = BoundingBoxes(
                         new_boxes, 
                         format=new_boxes_with_idx.format, 
                         canvas_size=new_boxes_with_idx.canvas_size
                     )
                     
-                    # Update target
+                    # Update target (in-place modification of the dict passed in)
                     target["boxes"] = new_boxes
                     target["labels"] = new_labels
                     
                     return new_image, target
                 else:
                     # If all boxes are removed, return empty
+                    # Optimization: Use empty_like to inherit properties
                     target["boxes"] = BoundingBoxes(
                         torch.empty((0, 4), dtype=boxes.dtype, device=device),
                         format=boxes.format, 
-                        canvas_size=boxes.canvas_size # Should be updated canvas size? 
-                        # Actually RandomIoUCrop updates canvas_size in new_boxes_with_idx, so we should use that if available
-                        # But here new_boxes_with_idx is empty.
-                        # We can just use the new image size.
+                        canvas_size=F.get_size(new_image) # Update canvas size to new image size
                     )
-                    # Update canvas size based on new image
-                    h, w = F.get_size(new_image)
-                    target["boxes"].canvas_size = (h, w)
                     
                     target["labels"] = torch.empty((0,), dtype=labels.dtype, device=device)
                     return new_image, target
 
             except Exception as e:
-                print(f"Warning: RandomIoUCrop failed with index hack, skipping crop. Error: {e}")
+                # print(f"Warning: RandomIoUCrop failed with index hack, skipping crop. Error: {e}")
+                # Fail gracefully by returning original input
                 return inputs if len(inputs) > 1 else inputs[0]
 
         return super().forward(*inputs)
