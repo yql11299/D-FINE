@@ -23,7 +23,7 @@ class DFINEPostProcessor(nn.Module):
     __share__ = ["num_classes", "use_focal_loss", "num_top_queries", "remap_mscoco_category"]
 
     def __init__(
-        self, num_classes=80, use_focal_loss=True, num_top_queries=300, remap_mscoco_category=False
+        self, num_classes=80, use_focal_loss=True, num_top_queries=300, remap_mscoco_category=False, eval_size=None
     ) -> None:
         super().__init__()
         self.use_focal_loss = use_focal_loss
@@ -32,7 +32,7 @@ class DFINEPostProcessor(nn.Module):
         self.remap_mscoco_category = remap_mscoco_category
         self.deploy_mode = False
         # Default eval size, should be updated by config or inferred
-        self.eval_size = None 
+        self.eval_size = eval_size 
 
     def extra_repr(self) -> str:
         return f"use_focal_loss={self.use_focal_loss}, num_classes={self.num_classes}, num_top_queries={self.num_top_queries}"
