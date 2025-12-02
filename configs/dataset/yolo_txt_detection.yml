@@ -11,12 +11,12 @@ train_dataloader:
   type: DataLoader
   dataset:
     type: YOLOTxtDetection
-    list_file: G:\datasets\chupin\nmsr\train_data\merge\train.txt
+    list_file: /media/ai/Data_SSD/yql/dataset/kc/num/train.txt
     transforms:
       type: Compose
       ops: ~
   shuffle: True
-  num_workers: 4
+  num_workers: 8
   drop_last: True
   collate_fn:
     type: BatchImageCollateFunction
@@ -26,12 +26,12 @@ val_dataloader:
   type: DataLoader
   dataset:
     type: YOLOTxtDetection
-    list_file: G:\datasets\chupin\nmsr\train_data\merge\eval.txt
+    list_file: /media/ai/Data_SSD/yql/dataset/kc/num/20230630/eval/eval.txt
     transforms:
       type: Compose
       ops: ~
   shuffle: False
-  num_workers: 4
+  num_workers: 8
   drop_last: False
   collate_fn:
     type: BatchImageCollateFunction
