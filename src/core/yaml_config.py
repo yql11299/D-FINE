@@ -158,21 +158,25 @@ class YAMLConfig(BaseConfig):
 
     @staticmethod
     def get_rank_batch_size(cfg):
-        """compute batch size for per rank if total_batch_size is provided."""
+        """Compute batch size per rank.
+        If `batch_size` is provided, it is treated as per-rank batch size.
+        If `total_batch_size` is provided, it is treated as total batch size and divided by world size (legacy support).
+        """
         assert ("total_batch_size" in cfg or "batch_size" in cfg) and not (
             "total_batch_size" in cfg and "batch_size" in cfg
-        ), "`batch_size` or `total_batch_size` should be choosed one"
+        ), "`batch_size` or `total_batch_size` should be chosen one"
 
-        total_batch_size = cfg.get("total_batch_size", None)
-        if total_batch_size is None:
+        if "batch_size" in cfg:
             bs = cfg.get("batch_size")
         else:
+            total_batch_size = cfg.get("total_batch_size")
             from ..misc import dist_utils
 
             assert (
                 total_batch_size % dist_utils.get_world_size() == 0
             ), "total_batch_size should be divisible by world size"
             bs = total_batch_size // dist_utils.get_world_size()
+            
         return bs
 
     def build_dataloader(self, name: str):

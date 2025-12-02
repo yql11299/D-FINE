@@ -61,6 +61,30 @@ class DetSolver(BaseSolver):
         best_stat_print = best_stat.copy()
         start_time = time.time()
         start_epoch = self.last_epoch + 1
+
+        # TODO
+        # fit
+        # Scale learning rate based on global batch size
+        if dist_utils.is_dist_available_and_initialized():
+            world_size = dist_utils.get_world_size()
+            print(f"INFO: Scaling learning rate and warmups by world size ({world_size}).")
+            
+            # Scale Learning Rate
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = param_group['lr'] * world_size
+            
+            # Scale LR Warmup Duration (inversely proportional)
+            if self.lr_warmup_scheduler is not None and hasattr(self.lr_warmup_scheduler, 'warmup_duration'):
+                original_warmup = self.lr_warmup_scheduler.warmup_duration
+                self.lr_warmup_scheduler.warmup_duration = int(original_warmup / world_size)
+                print(f"INFO: Scaled LR warmup_duration from {original_warmup} to {self.lr_warmup_scheduler.warmup_duration}")
+
+            # Scale EMA Warmups (inversely proportional)
+            if self.ema is not None and hasattr(self.ema, 'warmups'):
+                original_ema_warmups = self.ema.warmups
+                self.ema.warmups = int(original_ema_warmups / world_size)
+                print(f"INFO: Scaled EMA warmups from {original_ema_warmups} to {self.ema.warmups}")
+
         for epoch in range(start_epoch, args.epochs):
             self.train_dataloader.set_epoch(epoch)
             # self.train_dataloader.dataset.set_epoch(epoch)
