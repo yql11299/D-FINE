@@ -41,8 +41,10 @@ train_dataloader:
         epoch: 40 # epoch in [71, ~) stop `ops`
         ops: ['RandomPhotometricDistort', 'RandomZoomOut']
   shuffle: False
-  num_workers: 4
+  num_workers: 8
   drop_last: True
+  pin_memory: True
+  persistent_workers: True
   collate_fn:
     type: BatchImageCollateFunction
     base_size: *input_size
@@ -134,13 +136,13 @@ DFINECriterion:
   weight_dict: {loss_vfl: 1, loss_bbox: 5, loss_giou: 2, loss_fgl: 0.15, loss_ddf: 1.5}
   losses: ['vfl', 'boxes', 'local']
   alpha: 0.75
-  gamma: 2.0
+  gamma: 3.0
   reg_max: 32
   matcher:
     type: HungarianMatcher
     weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2}
     alpha: 0.25
-    gamma: 2.0
+    gamma: 3.0
 
 # --- Optimizer & Training Config ---
 use_amp: True
@@ -159,21 +161,21 @@ optimizer:
   params:
     -
       params: '^(?=.*backbone)(?!.*norm|bn).*$'
-      lr: 0.00004
+      lr: 0.00001
     -
       params: '^(?=.*backbone)(?=.*norm|bn).*$'
-      lr: 0.00004
+      lr: 0.00001
       weight_decay: 0.
     -
       params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
-  lr: 0.0004
+  lr: 0.0001
   betas: [0.9, 0.999]
-  weight_decay: 0.0001
+  weight_decay: 0.0005
 
 lr_scheduler:
   type: CosineAnnealingLR
-  T_max: 50
+  T_max: 20
   eta_min: 0.000004
 
 lr_warmup_scheduler:

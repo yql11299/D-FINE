@@ -23,9 +23,11 @@ class YOLOTxtDetection(DetDataset):
         self,
         list_file: str,
         transforms: Optional[object] = None,
+        min_size: int = 10, 
     ):
         self.list_file = list_file
         self.transforms = transforms
+        self.min_size = min_size
         
         # Read image list
         with open(list_file, "r") as f:
@@ -197,12 +199,19 @@ class YOLOTxtDetection(DetDataset):
                     
                 # Check 2: Box validity (xmin < xmax, ymin < ymax) implicitly checked by w>0, h>0
                 # Convert to pixel coords to be sure
+                w_px = bw * w
+                h_px = bh * h
                 x1 = (cx - bw / 2) * w
                 y1 = (cy - bh / 2) * h
                 x2 = (cx + bw / 2) * w
                 y2 = (cy + bh / 2) * h
                 
-                # Check 3: Pixel boundary check (strict)
+                # Check 3: Min size check
+                if w_px < self.min_size or h_px < self.min_size:
+                    print(f"\n[Small Box] {label_path} Line {i+1}: size={w_px:.1f}x{h_px:.1f} < min_size={self.min_size}")
+                    return False, False
+
+                # Check 4: Pixel boundary check (strict)
                 # Allow small tolerance for rounding
                 if x1 < -1 or y1 < -1 or x2 > w + 1 or y2 > h + 1:
                      print(f"\n[Box Out of Image] {label_path} Line {i+1}: box={x1,y1,x2,y2}, img={w,h}")

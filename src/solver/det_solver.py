@@ -92,7 +92,22 @@ class DetSolver(BaseSolver):
                 self.train_dataloader.sampler.set_epoch(epoch)
 
             if epoch == self.train_dataloader.collate_fn.stop_epoch:
-                self.load_resume_state(str(self.output_dir / "best_stg1.pth"))
+                # Wait for master process to finish saving best_stg1.pth
+                if dist_utils.is_dist_available_and_initialized():
+                    torch.distributed.barrier()
+                
+                # Ensure the file exists before loading
+                best_stg1_path = self.output_dir / "best_stg1.pth"
+                if best_stg1_path.exists():
+                    try:
+                        self.load_resume_state(str(best_stg1_path))
+                    except EOFError:
+                        print("Warning: best_stg1.pth is corrupted or incomplete. Continuing with current model weights.")
+                    except Exception as e:
+                        print(f"Warning: Failed to load best_stg1.pth: {e}. Continuing with current model weights.")
+                else:
+                    print(f"Warning: {best_stg1_path} not found. Continuing with current model weights.")
+
                 if self.ema:
                     self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
                     print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
@@ -191,8 +206,20 @@ class DetSolver(BaseSolver):
                     }
                     if self.ema:
                         self.ema.decay -= 0.0001
-                        self.load_resume_state(str(self.output_dir / "best_stg1.pth"))
-                        print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
+                        
+                        # Wait for master process to ensure file integrity
+                        if dist_utils.is_dist_available_and_initialized():
+                            torch.distributed.barrier()
+
+                        best_stg1_path = self.output_dir / "best_stg1.pth"
+                        if best_stg1_path.exists():
+                            try:
+                                self.load_resume_state(str(best_stg1_path))
+                                print(f"Refresh EMA at epoch {epoch} with decay {self.ema.decay}")
+                            except Exception as e:
+                                print(f"Warning: Failed to reload best_stg1.pth at end of epoch {epoch}: {e}. Keeping current weights.")
+                        else:
+                            print(f"Warning: {best_stg1_path} not found at end of epoch {epoch}. Keeping current weights.")
 
             log_stats = {
                 **{f"train_{k}": v for k, v in train_stats.items()},
