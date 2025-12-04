@@ -108,13 +108,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         "-c",
-        default=r"configs\dfine\dfine_hgnetv2_n_coco.yml",
+        default=r"configs\dfine\custom\unified_train_config.yml",
         type=str,
     )
     parser.add_argument(
         "--resume",
         "-r",
-        default=r"models\pretrained\dfine_n_coco.pth",
+        default=r"D:\valid_data\num_merge\model\dfine\dfine_hgnetv2_s_custom_unified\best_stg2.pth",
         type=str,
     )
     parser.add_argument(

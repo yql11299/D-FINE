@@ -24,7 +24,8 @@ def main(args):
     """Convert ONNX to OpenVINO IR. For INT8, uses Post-Training Optimization Tool (POT)."""
     precision = args.precision.upper()
     onnx_path = args.onnx
-    input_shape = [1, 3, args.img_size[0], args.img_size[1]]
+    h, w = args.img_size
+    input_shape = [1, h, w, 3]
 
     try:
         import openvino as ov
@@ -39,7 +40,7 @@ def main(args):
         xml_path = os.path.join(args.output_dir, f"{args.model_name}_{precision.lower()}.xml")
         print(f"Converting ONNX → OpenVINO IR\n  input: {onnx_path}\n  output: {xml_path}\n  precision: {args.precision}")
 
-        ov_model = ov.convert_model(onnx_path)
+        ov_model = ov.convert_model(onnx_path, input=input_shape)
 
         compress_to_fp16 = precision == "FP16"
         ov.save_model(ov_model, xml_path, compress_to_fp16=compress_to_fp16)
@@ -52,24 +53,21 @@ def main(args):
 
         # 1. Load the ONNX model
         print("\n--- Step 1: Loading ONNX model ---")
-        ov_model = ov.convert_model(onnx_path)
+        ov_model = ov.convert_model(onnx_path, input=input_shape)
         print("Model loaded successfully.")
 
         # 2. Create the calibration dataset
         print("\n--- Step 2: Creating calibration dataset ---")
-        
-        input_shape = [1, 3, args.img_size[0], args.img_size[1]]  # [1, 3, H, W]
-        input_h, input_w = input_shape[2], input_shape[3]
+
         input_name = ov_model.input(0).any_name
 
         def transform_fn(img_path):
             image = cv2.imread(img_path)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            image = cv2.resize(image, (input_w, input_h))
-            image = image.transpose(2, 0, 1)
+            image = cv2.resize(image, (w, h))
             image = np.expand_dims(image, 0)
             image = image.astype(np.float32) / 255.0
-            return {input_name: image, "orig_target_sizes": np.array([[input_h, input_w]], dtype=np.float32)}
+            return {input_name: image}
 
         # 3. Quantize the model
         print("\n--- Step 3: Running quantization ---")
@@ -80,11 +78,9 @@ def main(args):
                 transform_func=transform_fn
             ),
             preset=QuantizationPreset.PERFORMANCE,
-            subset_size=min(args.subset, len(os.listdir(args.calib_dir))) # Ensure subset_size is not larger than available images
+            subset_size=min(args.subset, len(os.listdir(args.calib_dir)))  # Ensure subset_size is not larger than available images
         )
         print("Quantization complete.")
-        
-        
 
         # 4. Save the quantized model
         print("\n--- Step 4: Saving quantized model ---")
@@ -103,12 +99,19 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Convert ONNX to OpenVINO IR, using POT for INT8 quantization.")
-    parser.add_argument("--onnx", type=str, default=r"D:\valid_data\num_merge\model\dfine\dfine_hgnetv2_s_custom_unified\best_stg2.onnx", help="Path to the input ONNX model")
+    parser.add_argument("--onnx", type=str, default=r"D:\valid_data\num_merge\model\dfine\dfine_hgnetv2_s_custom_unified\best_stg2_custom.onnx", help="Path to the input ONNX model")
     parser.add_argument(
         "--output-dir", type=str, default=r"D:\valid_data\num_merge\model\dfine\dfine_hgnetv2_s_custom_unified", help="Directory to save OpenVINO IR files"
     )
     parser.add_argument(
-        "--model-name", type=str, default="model", help="Output model base name (without suffix)"
+        "--model-name", type=str, default="model_custom", help="Output model base name (without suffix)"
+    )
+    parser.add_argument(
+        "--img-size",
+        nargs="+",
+        type=int,
+        default=[320, 320],
+        help="Image size for export (height, width)",
     )
     parser.add_argument(
         "--precision", type=str, default="int8", choices=["FP32", "FP16", "INT8"], help="IR precision"
@@ -117,11 +120,7 @@ if __name__ == "__main__":
         "--calib-dir", type=str, default=r"G:\datasets\chupin\nmsr\train_data\merge\images", help="Calibration images directory for INT8"
     )
     parser.add_argument(
-        "--img-size", nargs=2, type=int, default=[320, 320], help="Export H W for inputs (Note: Not used by POT simplified engine, but kept for compatibility)"
-    )
-    parser.add_argument(
         "--subset", type=int, default=200, help="Number of calibration samples for POT"
     )
     args = parser.parse_args()
     main(args)
-

@@ -124,6 +124,7 @@ class OvInfer:
         if keep_ratio:
             # 修正框坐标
             boxes = correct_box(boxes, self.ratio, self.pad_w, self.pad_h)
+        # boxes = correct_box(boxes, self.ratio, self.pad_w, self.pad_h)
         # 过滤低置信度框
         mask = scores >= score_thresh
         boxes = boxes[mask]
@@ -162,8 +163,9 @@ class OvInfer:
                 (self.target_size[1], self.target_size[0]),
                 interpolation=cv2.INTER_LINEAR,
             )
-            keep_ratio = False  # INT8模型不使用aspect ratio padding
-        elif keep_ratio:
+            # keep_ratio = False  # INT8模型不使用aspect ratio padding
+            keep_ratio = True
+        if keep_ratio:
             self.resized_image, self.ratio, self.pad_w, self.pad_h = resize_with_aspect_ratio(
                 image, self.target_size[0], interpolation=Image.BILINEAR
             )
@@ -513,13 +515,13 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-r", "--model", type=str, default=r"output\model_fp16.xml")
-    parser.add_argument("-i", "--input", type=str, default=r"E:\Data\download\20251201\nmsrjcd\bakeProduced\images")
+    parser.add_argument("-r", "--model", type=str, default=r"D:\valid_data\num_merge\model\dfine\dfine_hgnetv2_s_custom_unified\model_int8.xml")
+    parser.add_argument("-i", "--input", type=str, default=r"D:\valid_data\num_merge\0630_train\eval\images")
     parser.add_argument("-d", "--device", type=str, default="cpu")
     parser.add_argument("--visualize", action="store_true", default=True)
-    parser.add_argument("--output-dir", type=str, default=r"E:\Data\download\20251201\nmsrjcd\bakeProduced\output\openvino_fp16_infer_eval")
+    parser.add_argument("--output-dir", type=str, default=r"D:\valid_data\num_merge\0630_train\eval\test_result\dfine_s_openvino_int8")
     parser.add_argument("--label-format", type=str, choices=["none", "voc", "yolo"], default="voc")
-    parser.add_argument("--score-thresh", type=float, default=0.5)
+    parser.add_argument("--score-thresh", type=float, default=0.3)
     parser.add_argument("--classe", type=int, nargs='*', default=[0], help="可选类别过滤列表（整数 ID），为空表示不过滤")
     parser.add_argument("--remap", type=str, default='{0: "kc"}', help="类别重映射：支持 txt(每行一个类别名)、json(字典)，或 JSON 字符串；为空使用 COCO 默认映射")
     args = parser.parse_args()
