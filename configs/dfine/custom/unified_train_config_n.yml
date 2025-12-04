@@ -118,7 +118,7 @@ DFINETransformer:
   num_levels: 2
   num_layers: 3
   eval_idx: -1
-  num_queries: 300
+  num_queries: 100
   num_denoising: 100
   label_noise_ratio: 0.5
   box_noise_scale: 1.0
@@ -130,7 +130,7 @@ DFINETransformer:
   query_select_method: default
 
 DFINEPostProcessor:
-  num_top_queries: 300
+  num_top_queries: 100
   eval_size: *eval_spatial_size # Must match Resize/Pad size for correct coordinate restoration
 
 DFINECriterion:

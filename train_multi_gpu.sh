@@ -8,7 +8,7 @@ export CUDA_VISIBLE_DEVICES=0,3
 echo "Starting Multi-GPU Training on GPUs: $CUDA_VISIBLE_DEVICES"
 
 # Define Output Dir (Must match config)
-OUTPUT_DIR="output/dfine_hgnetv2_s_custom_unified"
+OUTPUT_DIR="output/dfine_hgnetv2_n_custom_unified"
 
 # Check for resume flag
 ARGS=""
@@ -22,4 +22,4 @@ if [ "$1" == "--resume" ]; then
 fi
 
 # Note: --nproc_per_node should match the number of GPUs in CUDA_VISIBLE_DEVICES
-torchrun --master_port=7777 --nproc_per_node=2 train.py -c configs/dfine/custom/unified_train_config.yml --use-amp --seed=0 $ARGS
+torchrun --master_port=7777 --nproc_per_node=2 train.py -c configs/dfine/custom/unified_train_config_n.yml --use-amp --seed=0 $ARGS
