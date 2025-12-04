@@ -51,7 +51,7 @@ train_dataloader:
     base_size_repeat: 20
     stop_epoch: 50
     ema_restart_decay: 0.9999
-  batch_size: 120 # Per-GPU batch size
+  batch_size: 96 # Per-GPU batch size
 
 val_dataloader:
   type: DataLoader
@@ -69,7 +69,7 @@ val_dataloader:
   drop_last: False
   collate_fn:
     type: BatchImageCollateFunction
-  batch_size: 120 # Per-GPU batch size
+  batch_size: 96 # Per-GPU batch size
 
 
 # --- Model Config (HGNetv2-N) ---
