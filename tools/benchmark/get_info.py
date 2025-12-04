@@ -43,8 +43,30 @@ def main(
 
     model = Model_for_flops().eval()
 
+    # Resolve input size: default from config's collate_fn.base_size, can be overridden by CLI
+    try:
+        base_size = cfg.train_dataloader.collate_fn.base_size
+    except Exception:
+        base_size = 640
+    if args.img_size is not None:
+        if isinstance(args.img_size, (list, tuple)):
+            if len(args.img_size) == 1:
+                h = w = int(args.img_size[0])
+            elif len(args.img_size) >= 2:
+                h, w = int(args.img_size[0]), int(args.img_size[1])
+            else:
+                h = w = int(base_size)
+        else:
+            h = w = int(args.img_size)
+    else:
+        h = w = int(base_size)
+
     flops, macs, _ = calculate_flops(
-        model=model, input_shape=(1, 3, 640, 640), output_as_string=True, output_precision=4
+        model=model,
+        input_shape=(1, 3, h, w),
+        output_as_string=True,
+        output_precision=4,
+        print_detailed=args.detailed,
     )
     params = sum(p.numel() for p in model.parameters())
     print("Model FLOPs:%s   MACs:%s   Params:%s \n" % (flops, macs, params))
@@ -54,6 +76,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", "-c", default="configs/dfine/dfine_hgnetv2_l_coco.yml", type=str
+    )
+    parser.add_argument(
+        "--img-size",
+        "-s",
+        nargs="+",
+        type=int,
+        help="输入尺寸，单值表示方形 H=W，或两个值 H W",
+    )
+    parser.add_argument(
+        "--detailed",
+        action="store_true",
+        help="打印每一层的 FLOPs/参数 详细信息",
     )
     args = parser.parse_args()
 

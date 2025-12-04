@@ -38,7 +38,7 @@ train_dataloader:
         - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
       policy:
         name: stop_epoch
-        epoch: 40 # epoch in [71, ~) stop `ops`
+        epoch: 50 # epoch in [71, ~) stop `ops`
         ops: ['RandomPhotometricDistort', 'RandomZoomOut']
   shuffle: False
   num_workers: 8
@@ -49,9 +49,9 @@ train_dataloader:
     type: BatchImageCollateFunction
     base_size: *input_size
     base_size_repeat: 20
-    stop_epoch: 40
+    stop_epoch: 50
     ema_restart_decay: 0.9999
-  batch_size: 40 # Per-GPU batch size
+  batch_size: 144 # Per-GPU batch size
 
 val_dataloader:
   type: DataLoader
@@ -65,11 +65,11 @@ val_dataloader:
         - {type: PadToSize, size: *eval_spatial_size, fill: 0}
         - {type: ConvertPILImage, dtype: 'float32', scale: True}
   shuffle: False
-  num_workers: 4
+  num_workers: 6
   drop_last: False
   collate_fn:
     type: BatchImageCollateFunction
-  batch_size: 40 # Per-GPU batch size
+  batch_size: 144 # Per-GPU batch size
 
 
 # --- Model Config (HGNetv2-N) ---
@@ -118,8 +118,8 @@ DFINETransformer:
   num_levels: 2
   num_layers: 3
   eval_idx: -1
-  num_queries: 100
-  num_denoising: 100
+  num_queries: 200
+  num_denoising: 200
   label_noise_ratio: 0.5
   box_noise_scale: 1.0
   reg_max: 32
@@ -130,7 +130,7 @@ DFINETransformer:
   query_select_method: default
 
 DFINEPostProcessor:
-  num_top_queries: 100
+  num_top_queries: 200
   eval_size: *eval_spatial_size # Must match Resize/Pad size for correct coordinate restoration
 
 DFINECriterion:
@@ -154,7 +154,7 @@ ema:
   warmups: 300 # Scaled down for batch_size 40 (approx 500 * 24/40)
   start: 0
 
-epochs: 50
+epochs: 100
 clip_max_norm: 0.1
 
 optimizer:
